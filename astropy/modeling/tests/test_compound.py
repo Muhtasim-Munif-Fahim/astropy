@@ -943,6 +943,59 @@ def test_compound_evaluate_or():
     )
 
 
+@pytest.mark.parametrize(
+    "expr",
+    [
+        lambda m1, m2: m1 + m2,
+        lambda m1, m2: m1 * m2,
+        lambda m1, m2: m1 & m2,
+    ],
+)
+@pytest.mark.parametrize(
+    "make_models",
+    [
+        pytest.param(
+            lambda: (
+                Const1D(np.ones((3, 4))),
+                Gaussian1D(np.ones((3, 4)), np.zeros((3, 4)), np.ones((3, 4))),
+            ),
+            id="array_parameters",
+        ),
+        pytest.param(
+            lambda: (
+                Const1D([1.0, 2.0], n_models=2),
+                Gaussian1D([1.0, 2.0], [0.0, 0.5], [1.0, 2.0], n_models=2),
+            ),
+            id="model_set",
+        ),
+    ],
+)
+def test_compound_evaluate_array_valued_parameters(expr, make_models):
+    """
+    Regression test for #20554: ``n_left_params`` must count the parameters
+    of the left model, not the number of parameter values, so that
+    ``evaluate(*inputs, *parameters)`` splits the parameters correctly when
+    they are array-valued or the models form a model set.
+    """
+    model1, model2 = make_models()
+    compound = expr(model1, model2)
+    assert compound.n_left_params == len(model1.param_names)
+
+    param_ndim = np.ndim(getattr(model1, model1.param_names[0]).value)
+    x = np.linspace(-1, 1, 5).reshape((5,) + (1,) * param_ndim)
+    inputs = (x,) * compound.n_inputs
+    params = [getattr(compound, name).value for name in compound.param_names]
+    p1 = [getattr(model1, name).value for name in model1.param_names]
+    p2 = [getattr(model2, name).value for name in model2.param_names]
+
+    result = compound.evaluate(*inputs, *params)
+    if compound.op == "&":
+        expected = [model1.evaluate(x, *p1), model2.evaluate(x, *p2)]
+    else:
+        expected = expr(model1.evaluate(x, *p1), model2.evaluate(x, *p2))
+    assert_allclose(result, expected)
+
+
 def test_compound_evaluate_fix_inputs_by_keyword():
     """
     Tests that compound evaluate function produces the same
